@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IAST-GeoFence Secure Page</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: sans-serif; background: #f9f9f9; padding: 2em; }
+    #status { font-size: 1.2em; margin-bottom: 1em; }
+    #protected-content {
+      display: none;
+      padding: 1em;
+      border-left: 5px solid #2e8b57;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <h2>🔐 GeoFence Protected Content</h2>
+  <div id="status">📍 Mendeteksi lokasi Anda...</div>
+  <div id="protected-content">
+    <p>✅ Akses diberikan karena Anda berada dalam radius lokasi yang ditentukan.</p>
+    <p>🔓 Ini adalah konten rahasia yang hanya bisa diakses dari lokasi spesifik.</p>
+  </div>
+
+  <!-- ✅ Manual geohash decoder -->
+  <script>
+    // Decode base32 geohash to lat/lon (precision ~meters)
+    function decodeGeohash(geohash) {
+      const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
+      let even = true;
+      let lat = [-90.0, 90.0];
+      let lon = [-180.0, 180.0];
+      for (let i = 0; i < geohash.length; i++) {
+        const c = geohash[i];
+        const cd = BASE32.indexOf(c);
+        for (let mask = 16; mask > 0; mask >>= 1) {
+          if (even) {
+            const mid = (lon[0] + lon[1]) / 2;
+            (cd & mask) ? lon[0] = mid : lon[1] = mid;
+          } else {
+            const mid = (lat[0] + lat[1]) / 2;
+            (cd & mask) ? lat[0] = mid : lat[1] = mid;
+          }
+          even = !even;
+        }
+      }
+      return {
+        latitude: (lat[0] + lat[1]) / 2,
+        longitude: (lon[0] + lon[1]) / 2
+      };
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const toRad = deg => deg * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    }
+
+    async function checkGeoAccess() {
+      const status = document.getElementById('status');
+      const content = document.getElementById('protected-content');
+
+      try {
+        const res = await fetch('cipher_pkg.json');
+        const pkg = await res.json();
+        const [ghash, radiusStr] = pkg.geocode.split('|');
+        const radius = parseFloat(radiusStr);
+        const center = decodeGeohash(ghash);
+
+        if (!navigator.geolocation) {
+          status.textContent = "❌ Geolocation tidak didukung di browser ini.";
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(pos => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const dist = haversine(lat, lon, center.latitude, center.longitude);
+          console.log(`Jarak ke pusat: ${dist.toFixed(2)} meter`);
+
+          if (dist <= radius) {
+            status.innerHTML = `✅ Anda berada dalam ${radius} m dari pusat.`;
+            content.style.display = 'block';
+          } else {
+            status.innerHTML = `🚫 Lokasi Anda (${dist.toFixed(2)} m) di luar radius ${radius} m.`;
+          }
+        }, err => {
+          status.textContent = "❌ Gagal mendapatkan lokasi: " + err.message;
+        });
+      } catch (e) {
+        status.textContent = "❌ Error saat memuat paket chiper: " + e.message;
+      }
+    }
+
+    window.onload = checkGeoAccess;
+  </script>
+</body>
+</html>
